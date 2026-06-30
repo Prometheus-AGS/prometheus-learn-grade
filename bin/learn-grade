@@ -1,0 +1,162 @@
+#!/usr/bin/env bash
+# learn-grade — external grader for the Feynman learning loop.
+#
+# Calls gpt-5.5 via the openai-proxy with the canonical grading schema from
+# skills/learn/learn-grade/SKILL.md. Returns a JSON grade to stdout.
+#
+# Usage:
+#   learn-grade --concept-id <id> --explanation "<text>" [--corpus-path <path>] [--goal-id <id>]
+#
+# Or via stdin:
+#   echo "<text>" | learn-grade --concept-id <id>
+#
+# Always exits 0. Errors are written to stderr and the JSON grade includes
+# `error: <message>` in that case.
+
+set -uo pipefail
+
+# Source env so the proxy route + grader model are picked up automatically.
+if [ -f "${HOME}/.prometheus/.env" ]; then
+  set -a
+  . "${HOME}/.prometheus/.env"
+  set +a
+fi
+
+GRADER_URL="${LEARN_GRADER_URL:-${CLOUD_LLM_URL:-http://localhost:8181/v1}}"
+GRADER_MODEL="${LEARN_GRADER_MODEL:-${PMPO_REFLECT_MODEL:-gpt-5.5}}"
+
+CONCEPT_ID=""
+EXPLANATION=""
+CORPUS_PATH=""
+GOAL_ID=""
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --concept-id) CONCEPT_ID="$2"; shift 2 ;;
+    --explanation) EXPLANATION="$2"; shift 2 ;;
+    --corpus-path) CORPUS_PATH="$2"; shift 2 ;;
+    --goal-id) GOAL_ID="$2"; shift 2 ;;
+    --url) GRADER_URL="$2"; shift 2 ;;
+    --model) GRADER_MODEL="$2"; shift 2 ;;
+    *) echo "unknown arg: $1" >&2; exit 0 ;;
+  esac
+done
+
+if [ -z "$EXPLANATION" ] && [ ! -t 0 ]; then
+  EXPLANATION="$(cat)"
+fi
+
+if [ -z "$EXPLANATION" ]; then
+  echo '{"error":"no explanation provided; pass via --explanation or stdin"}' >&2
+  exit 0
+fi
+
+# Build prompts via temp files (avoids heredoc escaping bugs)
+TMPDIR_LOCAL=$(mktemp -d)
+trap 'rm -rf "$TMPDIR_LOCAL"' EXIT
+
+cat > "$TMPDIR_LOCAL/system.txt" <<'SYS_EOF'
+You are an external, source-grounded grader for a Feynman learning loop.
+You are NOT the producer — you did not write the explanation you are grading.
+Your job is to evaluate the learner's explanation of a concept against the teaching corpus.
+
+Score the explanation on four dimensions, each on a 0..1 scale:
+- completeness (0..1): does the explanation cover the key aspects present in the corpus?
+- accuracy (0..1): is the explanation factually correct vs the corpus? A single factual error caps accuracy below 0.7. Always name the specific error.
+- clarity (0..1): is it understandable to a peer audience?
+- misconceptions_absent (0 or 1): does it contain any known misconceptions from the corpus? 1.0 = none detected, 0.0 = at least one misconception present.
+
+Apply the S-02 anti-sycophancy rule: lead with errors and gaps, do not soft-pedal. If a gap exists, the JSON must include it explicitly.
+
+Return ONLY a JSON object with this exact shape:
+{
+  "concept_id": "<concept_id>",
+  "scores": { "completeness": 0.0, "accuracy": 0.0, "clarity": 0.0, "misconceptions_absent": 1.0 },
+  "overall_score": 0.0,
+  "passed": false,
+  "pass_threshold": 0.7,
+  "gaps": [ { "dimension": "accuracy", "description": "specific error", "corpus_ref": "..." } ],
+  "feedback": "Direct, non-flattering feedback. Lead with errors and gaps."
+}
+
+Do not include any prose outside the JSON object. Do not use code fences.
+SYS_EOF
+
+{
+  echo "Concept to grade: ${CONCEPT_ID:-unspecified}"
+  echo ""
+  echo "Learner explanation:"
+  echo "$EXPLANATION"
+  if [ -n "$CORPUS_PATH" ] && [ -f "$CORPUS_PATH" ]; then
+    echo ""
+    echo "Reference corpus: $CORPUS_PATH"
+    echo "(Use this as ground truth. Score accuracy and misconceptions_absent against it.)"
+  fi
+} > "$TMPDIR_LOCAL/user.txt"
+
+# Build request via python (handles JSON escaping cleanly)
+python3 - "$GRADER_MODEL" "$GRADER_URL" "$CONCEPT_ID" "$GOAL_ID" \
+    "$TMPDIR_LOCAL/system.txt" "$TMPDIR_LOCAL/user.txt" \
+    > "$TMPDIR_LOCAL/request.json" <<'PYEOF'
+import json, sys
+model, url, concept_id, goal_id, sys_path, user_path = sys.argv[1:7]
+with open(sys_path) as f: system = f.read()
+with open(user_path) as f: user = f.read()
+print(json.dumps({
+    "model": model,
+    "messages": [
+        {"role": "system", "content": system},
+        {"role": "user",   "content": user},
+    ],
+    "response_format": {"type": "json_object"},
+    "max_tokens": 800,
+    "temperature": 0.2,
+}))
+PYEOF
+
+# Call grader
+RESPONSE=$(curl -sS --max-time 120 "$GRADER_URL/chat/completions" \
+  -H "Content-Type: application/json" \
+  --data-binary "@$TMPDIR_LOCAL/request.json" 2>&1)
+
+# Write raw response to file for parsing (avoids shell escaping issues)
+echo "$RESPONSE" > "$TMPDIR_LOCAL/response.json"
+
+# Parse and emit
+python3 - "$CONCEPT_ID" "$GOAL_ID" "$GRADER_MODEL" "$GRADER_URL" \
+    "$TMPDIR_LOCAL/response.json" <<'PYEOF'
+import json, sys
+concept_id, goal_id, grader_model, grader_url, resp_path = sys.argv[1:6]
+try:
+    with open(resp_path) as f: raw = f.read()
+    outer = json.loads(raw)
+    content = outer["choices"][0]["message"]["content"]
+    grade = json.loads(content)
+except Exception as e:
+    print(json.dumps({
+        "error": str(e),
+        "raw_response_preview": (raw if 'raw' in dir() else '')[:500],
+        "concept_id": concept_id,
+        "passed": False,
+    }, indent=2))
+    sys.exit(0)
+
+grade.setdefault("concept_id", concept_id)
+grade.setdefault("goal_id", goal_id)
+grade.setdefault("grader_model", grader_model)
+grade.setdefault("grader_url", grader_url)
+if "scores" in grade:
+    s = grade["scores"]
+    grade["overall_score"] = round(
+        (s.get("completeness",0) + s.get("accuracy",0) + s.get("clarity",0) + s.get("misconceptions_absent",0)) / 4,
+        3,
+    )
+    grade["passed"] = (
+        grade["overall_score"] >= 0.7
+        and s.get("accuracy", 1.0) >= 0.7
+        and s.get("misconceptions_absent", 1.0) >= 0.99
+    )
+print(json.dumps(grade, indent=2))
+PYEOF
+
+exit 0
