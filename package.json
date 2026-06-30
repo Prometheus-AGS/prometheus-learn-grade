@@ -1,0 +1,51 @@
+{
+  "name": "prometheus-learn-grade",
+  "version": "1.0.0",
+  "description": "External grader for self-evaluation — gpt-5.5 via the openai-proxy. A zero-dependency shell script that grades any freeform explanation against a corpus on four dimensions with anti-sycophancy built in.",
+  "license": "MIT",
+  "main": "bin/learn-grade",
+  "bin": {
+    "learn-grade": "bin/learn-grade"
+  },
+  "files": [
+    "bin/",
+    "config/",
+    "examples/",
+    "scripts/",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "bash scripts/test.sh",
+    "install": "cp bin/learn-grade ~/.local/bin/ && chmod +x ~/.local/bin/learn-grade"
+  },
+  "engines": {
+    "bash": ">=4.0",
+    "python3": ">=3.8"
+  },
+  "dependencies": {},
+  "keywords": [
+    "ai",
+    "agents",
+    "grader",
+    "evaluation",
+    "self-evaluation",
+    "anti-sycophancy",
+    "karpathy",
+    "feynman",
+    "gpt-5",
+    "openai",
+    "openai-proxy",
+    "prometheus"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Prometheus-AGS/prometheus-learn-grade.git"
+  },
+  "author": {
+    "name": "Travis James",
+    "url": "https://travisjames.ai"
+  },
+  "homepage": "https://github.com/Prometheus-AGS/prometheus-learn-grade",
+  "bugs": "https://github.com/Prometheus-AGS/prometheus-learn-grade/issues"
+}

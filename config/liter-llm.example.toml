@@ -1,0 +1,38 @@
+# liter-llm configuration for the prometheus-wiki-loop.
+#
+# Routes model classes (small / medium / frontier) to specific OpenAI-compatible
+# model names exposed by the local openai-proxy at http://localhost:8181/v1.
+#
+# The openai-proxy speaks OpenAI's wire API and uses ChatGPT tokens from
+# ~/.codex/auth.json. The gpt-5.* names below are what the proxy exposes.
+#
+# Pinned aliases take precedence over auto-detect logic.
+
+[aliases]
+# Cheap mechanical work: file listing, regex matching, format conversion,
+# JSON validation. Use for tiny pk-classifier helpers.
+small    = "gpt-5.4-nano"
+
+# Strong instruction-following with good cost/perf balance. Used by pk
+# focus, pk lint, and the prometheus-knowledge librarian compile path.
+medium   = "gpt-5.4-mini"
+
+# Top-tier reasoning. Reserved for:
+#   - learn-grade (the external grader for the Feynman loop)
+#   - sycophancy-correction reflect-phase validation
+#   - strategic-dreaming in pmpo-evolver
+#   - any task that grades or critiques human/LLM output
+#
+# Why the strongest model: the critic must be smarter than the producer,
+# otherwise the loop learns the producer's blind spots. Producer/grader
+# separation is a structural property — using a smaller grader is the
+# failure mode documented in karpathy-loop-continuous-improvement.md §
+# "Anti-sycophancy as a structural property".
+frontier = "gpt-5.5"
+
+# Specialist aliases for the wikipedia/wiki-loop pipeline.
+compile  = "gpt-5.4-mini"   # pk ingest (raw text → wiki entry)
+focus   = "gpt-5.4-mini"   # pk focus (query → synthesized brief)
+lint    = "gpt-5.4-mini"   # pk lint (contradiction/gap detection)
+grade   = "gpt-5.5"        # learn-grade (external grader)
+reflect = "gpt-5.5"        # pmpo-evolver reflect + sycophancy-correction
