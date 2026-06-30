@@ -43,7 +43,7 @@ WRONG='The Feynman learning loop is a single-shot prompt: you write the explanat
 RESULT=$(printf '%s' "$WRONG" | "$GRADER" --concept-id "feynman-loop" 2>&1)
 PASSED=$(echo "$RESULT" | python3 -c "import sys,json;d=json.loads(sys.stdin.read());print('yes' if d.get('passed') else 'no')" 2>/dev/null || echo "no")
 MISCONCEPT=$(echo "$RESULT" | python3 -c "import sys,json;d=json.loads(sys.stdin.read());print(d.get('scores',{}).get('misconceptions_absent',1))" 2>/dev/null || echo "1")
-if [ "$PASSED" = "no" ] && [ "$MISCONCEPT" = "0" ]; then
+if [ "$PASSED" = "no" ] && [ "${MISCONCEPT%%.*}" = "0" ]; then
   echo "  ✅ wrong explanation: passed=false, misconceptions_absent=0 (caught the misconception)"
   PASS=$((PASS + 1))
 else
